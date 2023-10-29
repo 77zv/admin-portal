@@ -1,15 +1,15 @@
 //Types
-import express, {Request, Response} from "express";
+import express, { Request, Response } from "express";
 import asyncHandler from "express-async-handler";
-import {adminProtect, protect} from "../middleware/authMiddleware";
-import {fetch} from "../httpUtils/nodeFetch";
+import { adminProtect, protect } from "../middleware/authMiddleware";
+import { fetch } from "../httpUtils/nodeFetch";
 //Status codes
-import {INTERNAL_SERVER_ERROR, OK} from "../httpUtils/statusCodes";
-import {AIRTABLE_URL_BASE, airtableGET} from "../httpUtils/airtable";
-import {TextAutomation} from "../types";
-import {logger} from "../loggerUtils/logger";
+import { INTERNAL_SERVER_ERROR, OK } from "../httpUtils/statusCodes";
+import { AIRTABLE_URL_BASE, airtableGET } from "../httpUtils/airtable";
+import { TextAutomation } from "../types";
+import { logger } from "../loggerUtils/logger";
 
-import {Twilio} from "twilio";
+import { Twilio } from "twilio";
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -318,7 +318,7 @@ router.route("/api/messaging/last-texts-sent").get(
       `${AIRTABLE_URL_BASE}/Text Automation History` +
       `?filterByFormula=DATETIME_DIFF(NOW(), {Date}, 'days') <= 7`;
 
-    const data = await airtableGET<TextAutomation>({url});
+    const data = await airtableGET<TextAutomation>({ url });
 
     if (data.kind === "error") {
       res.status(500).json({
@@ -349,11 +349,11 @@ router.route("/api/messaging/last-texts-sent").get(
 router.route("/api/messaging/get-text-conversation").get(
   adminProtect,
   asyncHandler(async (req: Request, res: Response) => {
-    const {targetNumber} = req.query;
+    const { targetNumber } = req.query;
 
-    logger.info(
-      `GET /api/messaging/get-text-conversation=${targetNumber}`
-    );
+    const conversationRoute = `GET /api/messaging/get-text-conversation=${targetNumber}`;
+
+    logger.info(conversationRoute);
 
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -366,7 +366,7 @@ router.route("/api/messaging/get-text-conversation").get(
       from: grassrootsNumber,
       to: targetNumber as string,
       dateSentAfter: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-    })
+    });
 
     const receivedMessages = client.messages.list({
       from: targetNumber as string,
@@ -374,9 +374,29 @@ router.route("/api/messaging/get-text-conversation").get(
       dateSentAfter: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     });
 
-    const [sent, received] = await Promise.all([sentMessages, receivedMessages]);
+    const [sent, received] = await Promise.allSettled([
+      sentMessages,
+      receivedMessages,
+    ]);
 
-    const messages = [...sent, ...received].sort((a, b) => {
+    const messagesSent = sent.status === "fulfilled" ? sent.value : [];
+    const messagesReceived =
+      received.status === "fulfilled" ? received.value : [];
+
+    const log =
+      sent.status === "rejected" && received.status === "rejected"
+        ? `${conversationRoute} failed. Both sent and received messages failed to fetch.`
+        : sent.status === "rejected"
+        ? `${conversationRoute} failed. Sent messages failed to fetch.`
+        : received.status === "rejected"
+        ? `${conversationRoute} failed. Received messages failed to fetch.`
+        : `${conversationRoute} success.}`;
+
+    sent.status === "rejected" || received.status === "rejected"
+      ? logger.warn(log)
+      : logger.info(log);
+
+    const messages = [...messagesSent, ...messagesReceived].sort((a, b) => {
       return new Date(a.dateSent).getTime() - new Date(b.dateSent).getTime();
     });
 
@@ -392,23 +412,20 @@ router.route("/api/messaging/get-text-conversation").get(
 router.route("/api/messaging/send-text-message").post(
   adminProtect,
   asyncHandler(async (req: Request, res: Response) => {
-    const {targetNumber, message} = req.body;
+    const { targetNumber, message } = req.body;
 
-    logger.info(
-      `POST /api/messaging/get-text-conversation`
-    );
+    const conversationRoute = `POST /api/messaging/get-text-conversation`;
+    logger.info(conversationRoute);
     logger.info(`Request body ${req.body}`);
 
-
-
     const grassrootsNumber = res.locals.user["Twilio Number"] as string;
-
 
     const sentMessage = await client.messages.create({
       body: message,
       from: grassrootsNumber,
       to: targetNumber,
     });
+    sentMessage.status == "failed" ? logger.warn(`${conversationRoute} failed`) : logger.info(`${conversationRoute} success`);
 
     res.status(200).json(sentMessage);
   })
