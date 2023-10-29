@@ -334,4 +334,20 @@ router.route("/api/messaging/last-texts-sent").get(
   })
 );
 
+/*
+
+*/
+router.route("/api/messaging/get-text-conversation").get(
+  protect,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { targetNumber } = req.query;
+
+    logger.info(
+      `GET /api/messaging/get-text-conversation=${targetNumber}`
+    );
+
+    
+  })
+);
+
 export default router;
