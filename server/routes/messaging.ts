@@ -10,10 +10,36 @@ import { TextAutomation } from "../types";
 import { logger } from "../loggerUtils/logger";
 
 import { Twilio } from "twilio";
+import { MessageInstance } from "twilio/lib/rest/api/v2010/account/message";
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const client = new Twilio(accountSid, authToken);
+
+// TODO: Move to types file
+interface SimplifiedMessage {
+  body: string;
+  dateCreated: Date;
+  dateSent: Date;
+  dateUpdated: Date;
+  from: string;
+  to: string;
+}
+
+/* 
+  Simplify the message object returned by the Twilio API to reduce payload.
+  Add whatever fields are needed to the SimplifiedMessage interface and this function when updating.
+*/
+const simplifyMessage = (original: MessageInstance): SimplifiedMessage => {
+  return {
+    body: original.body,
+    dateCreated: original.dateCreated,
+    dateSent: original.dateSent,
+    dateUpdated: original.dateUpdated,
+    from: original.from,
+    to: original.to,
+  };
+};
 
 //Utils
 const sendTextWebhook = async (url: string, phoneNumber: string) => {
@@ -349,18 +375,20 @@ router.route("/api/messaging/last-texts-sent").get(
 router.route("/api/messaging/get-text-conversation").get(
   adminProtect,
   asyncHandler(async (req: Request, res: Response) => {
-    const { targetNumber } = req.query;
+
+    const targetNumber = `+${req.query.targetNumber}`;
+    const grassrootsNumber = res.locals.user.fields["Twilio Number"];
+
+    if (!(/^\+\d{11}$/.test(targetNumber)) || !(/^\+\d{11}$/.test(grassrootsNumber))) {
+      logger.warn(`Invalid phone number format - targetNumber: ${targetNumber}, grassrootsNumber: ${grassrootsNumber}`);
+      res.status(400).json({ message: "Invalid phone number format." });
+      return;
+    }
 
     const conversationRoute = `GET /api/messaging/get-text-conversation=${targetNumber}`;
 
     logger.info(conversationRoute);
 
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-    const grassrootsNumber = res.locals.user["Twilio Number"] as string;
-
-    const client = new Twilio(accountSid, authToken);
 
     const sentMessages = client.messages.list({
       from: grassrootsNumber,
@@ -385,11 +413,11 @@ router.route("/api/messaging/get-text-conversation").get(
 
     const log =
       sent.status === "rejected" && received.status === "rejected"
-        ? `${conversationRoute} failed. Both sent and received messages failed to fetch.`
+        ? `${conversationRoute} failed to fetch both sent and received messages.`
         : sent.status === "rejected"
-        ? `${conversationRoute} failed. Sent messages failed to fetch.`
+        ? `${conversationRoute} failed to fetch sent messages.`
         : received.status === "rejected"
-        ? `${conversationRoute} failed. Received messages failed to fetch.`
+        ? `${conversationRoute} failed to fetch received messages.`
         : `${conversationRoute} success.}`;
 
     sent.status === "rejected" || received.status === "rejected"
@@ -399,6 +427,8 @@ router.route("/api/messaging/get-text-conversation").get(
     const messages = [...messagesSent, ...messagesReceived].sort((a, b) => {
       return new Date(a.dateSent).getTime() - new Date(b.dateSent).getTime();
     });
+
+    messages.map((message) => simplifyMessage(message));
 
     res.status(200).json(messages);
   })
@@ -425,7 +455,9 @@ router.route("/api/messaging/send-text-message").post(
       from: grassrootsNumber,
       to: targetNumber,
     });
-    sentMessage.status == "failed" ? logger.warn(`${conversationRoute} failed`) : logger.info(`${conversationRoute} success`);
+    sentMessage.status == "failed"
+      ? logger.warn(`${conversationRoute} failed`)
+      : logger.info(`${conversationRoute} success`);
 
     res.status(200).json(sentMessage);
   })
